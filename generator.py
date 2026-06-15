@@ -1,4 +1,4 @@
-# generator_tab.py — LoopDialog and GeneratorTab
+# generator.py — LoopDialog and GeneratorTab
 
 import re
 import json
@@ -67,7 +67,9 @@ class LoopDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
 
         title = QLabel("Insert @count{ } Loop")
-        title.setStyleSheet(f"color:{ACCENT}; font-size:14px; font-weight:700; background:transparent;")
+        title.setStyleSheet(
+            f"color:{ACCENT}; font-size:14px; font-weight:700; background:transparent;"
+        )
         layout.addWidget(title)
 
         desc = QLabel(
@@ -80,7 +82,9 @@ class LoopDialog(QDialog):
 
         if var_names:
             var_lbl = QLabel("Quick insert from variables:")
-            var_lbl.setStyleSheet(f"color:{TEXT_HINT}; font-size:10px; background:transparent;")
+            var_lbl.setStyleSheet(
+                f"color:{TEXT_HINT}; font-size:10px; background:transparent;"
+            )
             layout.addWidget(var_lbl)
 
             btn_row = QHBoxLayout()
@@ -90,7 +94,8 @@ class LoopDialog(QDialog):
                 b = QPushButton(name)
                 b.setStyleSheet(
                     f"QPushButton {{ background:{bg}; color:{fg}; border:1px solid {bd};"
-                    f"  border-radius:10px; padding:3px 10px; font-size:11px; font-family:{FONT_MONO}; font-weight:700; }}"
+                    f"  border-radius:10px; padding:3px 10px; font-size:11px;"
+                    f"  font-family:{FONT_MONO}; font-weight:700; }}"
                     f"QPushButton:hover {{ background:{bd}; color:#fff; }}"
                 )
                 b.clicked.connect(lambda _, n=name: self._select(n))
@@ -134,6 +139,10 @@ class LoopDialog(QDialog):
 
 # ── Generator Tab ─────────────────────────────────────────────
 class GeneratorTab(QWidget):
+    # Emitted with the JSON string whenever generateJson() or
+    # the "Build JSON" / "Send to Judge" buttons fire.
+    jsonBuilt = Signal(str)
+
     def __init__(self):
         super().__init__()
 
@@ -176,7 +185,9 @@ class GeneratorTab(QWidget):
         self.removeSubBtn.setStyleSheet(btn_danger())
         self.removeSubBtn.clicked.connect(self.removeSubtask)
         tc_lbl = QLabel("Tests:")
-        tc_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;")
+        tc_lbl.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;"
+        )
         self.testCountInput = QSpinBox()
         self.testCountInput.setRange(1, 100000)
         self.testCountInput.setValue(10)
@@ -244,7 +255,7 @@ class GeneratorTab(QWidget):
 
         # Constraints
         self.constraintEditor = QTextEdit()
-        self.constraintEditor.setPlaceholderText("Constraints (optional): 1 ≤ n ≤ 10⁵  ...")
+        self.constraintEditor.setPlaceholderText("Constraints (optional): 1 ≤ n ≤ 10⁵  …")
         self.constraintEditor.setFixedHeight(54)
         self.constraintEditor.setStyleSheet(editor_style())
         self.constraintEditor.textChanged.connect(self._onConstraintChanged)
@@ -284,11 +295,13 @@ class GeneratorTab(QWidget):
         right.addWidget(jsonCard, 1)
 
         # Action buttons
+        # Note: "Send to Judge" is now "Build & Apply" — it builds JSON
+        # and fires the jsonBuilt signal; the parent (JudgeTab) handles the rest.
         for label, slot, tip, style in [
-            ("Build JSON",       self.generateJson,  "Compile subtasks → JSON", btn_primary()),
-            ("Save JSON",        self.saveJson,       "Save JSON to file",       btn_ghost()),
-            ("Load JSON",        self.loadJson,       "Load JSON from file",     btn_ghost()),
-            ("Send to Judge ▶",  self.sendToJudge,    "Send to Judge tab",       btn_green()),
+            ("Build JSON",      self.generateJson,  "Compile subtasks → JSON",             btn_primary()),
+            ("Save JSON",       self.saveJson,       "Save JSON to file",                   btn_ghost()),
+            ("Load JSON",       self.loadJson,       "Load JSON from file",                 btn_ghost()),
+            ("Build & Apply ▶", self.sendToJudge,    "Build JSON and apply to judge config", btn_green()),
         ]:
             btn = QPushButton(label)
             btn.setToolTip(tip)
@@ -314,7 +327,9 @@ class GeneratorTab(QWidget):
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(6)
         lbl = QLabel(title)
-        lbl.setStyleSheet(f"color:{ACCENT}; font-size:12px; font-weight:800; background:transparent;")
+        lbl.setStyleSheet(
+            f"color:{ACCENT}; font-size:12px; font-weight:800; background:transparent;"
+        )
         layout.addWidget(lbl)
         card.setLayout(layout)
         return card
@@ -394,7 +409,8 @@ class GeneratorTab(QWidget):
             chip.setFixedHeight(22)
             chip.setStyleSheet(
                 f"QPushButton {{ background:{bg}; color:{fg}; border:1px solid {border};"
-                f"  border-radius:10px; padding:0 10px; font-size:11px; font-family:{FONT_MONO}; font-weight:700; }}"
+                f"  border-radius:10px; padding:0 10px; font-size:11px;"
+                f"  font-family:{FONT_MONO}; font-weight:700; }}"
                 f"QPushButton:hover {{ background:{border}; color:#fff; }}"
             )
             chip.clicked.connect(lambda checked=False, n=name: self._insertAtCursor(f"{{{n}}}"))
@@ -497,7 +513,8 @@ class GeneratorTab(QWidget):
                 f"QComboBox {{ background:{bg}; border:1px solid {bd}; border-radius:10px;"
                 f"  color:{fg}; font-size:11px; font-weight:700; padding:2px 6px 2px 8px; }}"
                 f"QComboBox::drop-down {{ border:none; width:14px; }}"
-                f"QComboBox QAbstractItemView {{ background:{BG2}; color:{TEXT_MAIN}; border:1px solid {BORDER}; selection-background-color:{ACCENT_DIM}; }}"
+                f"QComboBox QAbstractItemView {{ background:{BG2}; color:{TEXT_MAIN};"
+                f"  border:1px solid {BORDER}; selection-background-color:{ACCENT_DIM}; }}"
             )
         styleTypeBox(vartype)
         typeBox.currentTextChanged.connect(styleTypeBox)
@@ -549,7 +566,9 @@ class GeneratorTab(QWidget):
             f"  border-radius:10px; padding:0 8px; font-size:10px; font-family:{FONT_MONO}; }}"
             f"QPushButton:hover {{ border-color:{ACCENT}; color:{ACCENT}; }}"
         )
-        insertBtn.clicked.connect(lambda: self._insertAtCursor(f"{{{nameEdit.text().strip()}}}"))
+        insertBtn.clicked.connect(
+            lambda: self._insertAtCursor(f"{{{nameEdit.text().strip()}}}")
+        )
 
         removeBtn = QPushButton("✕")
         removeBtn.setFixedSize(20, 20)
@@ -703,6 +722,7 @@ class GeneratorTab(QWidget):
 
     # ── Actions ───────────────────────────────────────────────
     def generateJson(self):
+        """Build JSON from current subtasks, show in output box, emit jsonBuilt."""
         self.saveCurrent()
         result = []
         for i, sub in enumerate(self.subtasks, 1):
@@ -711,7 +731,10 @@ class GeneratorTab(QWidget):
             if sub.get("constraints", "").strip():
                 entry["constraints"] = sub["constraints"].strip()
             result.append(entry)
-        self.output.setText(json.dumps(result, indent=4))
+        json_str = json.dumps(result, indent=4)
+        self.output.setText(json_str)
+        # Notify any connected listener (e.g. the parent JudgeTab)
+        self.jsonBuilt.emit(json_str)
 
     def previewTest(self):
         self.saveCurrent()
@@ -753,9 +776,8 @@ class GeneratorTab(QWidget):
         self.output.setText(json.dumps(data, indent=4))
 
     def sendToJudge(self):
-        self.generateJson()
-        self.parent_app.judgeTab.jsonEditor.setText(self.output.toPlainText())
-        self.parent_app.tabs.setCurrentIndex(0)
+        """Build JSON and emit jsonBuilt so the parent JudgeTab can pick it up."""
+        self.generateJson()   # emits jsonBuilt internally
 
     def _clearMemory(self):
         save("gen_subtasks", "")

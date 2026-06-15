@@ -1,4 +1,4 @@
-# judge_tab.py — CodePanel and JudgeTab
+# judge_tab.py — CodePanel, JudgeTab, SettingsDialog
 
 import re
 import json
@@ -7,9 +7,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTextEdit, QLabel, QLineEdit, QFileDialog,
     QCheckBox, QProgressBar, QScrollArea, QFrame,
-    QSplitter, QDialog, QComboBox,
+    QSplitter, QDialog, QComboBox, QTabWidget,
 )
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QTextCursor
 
 from theme import (
     BG0, BG1, BG2, BG3, BORDER, BORDER_BRIGHT,
@@ -37,7 +38,6 @@ LANG_COLORS = {
 
 
 def _detect_lang(code):
-    """Guess language from first 512 chars of code."""
     head = code[:512]
     if re.search(r"#include|int main|std::|cout|cin|namespace", head):
         return "C++"
@@ -48,10 +48,10 @@ def _detect_lang(code):
     return None
 
 
-# ── Code panel ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Code Panel
+# ─────────────────────────────────────────────────────────────
 class CodePanel(QWidget):
-    """Header bar with pill lang buttons, mismatch warning, and syntax highlighting."""
-
     def __init__(self, title, settings_key, placeholder=""):
         super().__init__()
         self.settings_key     = settings_key
@@ -101,7 +101,6 @@ class CodePanel(QWidget):
         loadBtn.setStyleSheet(btn_ghost())
         loadBtn.clicked.connect(self._loadFile)
         hl.addWidget(loadBtn)
-
         header.setLayout(hl)
         layout.addWidget(header)
 
@@ -128,8 +127,8 @@ class CodePanel(QWidget):
         self.editor = QTextEdit()
         self.editor.setPlaceholderText(placeholder)
         self.editor.setStyleSheet(
-            f"QTextEdit {{ background:{BG1}; color:{TEXT_MAIN}; border:none; border-radius:0 0 5px 5px;"
-            f"  font-family:{FONT_MONO}; font-size:12px; padding:8px; }}"
+            f"QTextEdit {{ background:{BG1}; color:{TEXT_MAIN}; border:none;"
+            f"  border-radius:0 0 5px 5px; font-family:{FONT_MONO}; font-size:12px; padding:8px; }}"
         )
         self._highlighter = CodeHighlighter(self.editor.document(), saved_lang)
 
@@ -139,7 +138,6 @@ class CodePanel(QWidget):
 
         self.editor.textChanged.connect(self._onTextChanged)
         layout.addWidget(self.editor)
-
         self.setLayout(layout)
 
     def _selectLang(self, lang):
@@ -174,8 +172,7 @@ class CodePanel(QWidget):
             current  = self.lang()
             if detected and detected != current:
                 self._warnBar.setText(
-                    f"  ⚠  Looks like {detected} — but {current} is selected. "
-                    f"Click the right language button above."
+                    f"  ⚠  Looks like {detected} — but {current} is selected."
                 )
                 self._warnBar.setVisible(True)
             else:
@@ -208,7 +205,9 @@ class CodePanel(QWidget):
         return "Python"
 
 
-# ── Judge Tab ─────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Judge Tab  (main view — code panels + run bar + results)
+# ─────────────────────────────────────────────────────────────
 class JudgeTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -217,181 +216,71 @@ class JudgeTab(QWidget):
         root.setContentsMargins(10, 8, 10, 8)
         root.setSpacing(8)
 
-        # Code panels
+        # ── Code panels ───────────────────────────────────────
         code_row = QHBoxLayout()
         code_row.setSpacing(8)
-        self.userPanel = CodePanel("USER CODE",   "judge_user", placeholder="Paste or load user solution here…")
-        self.ansPanel  = CodePanel("ANSWER CODE", "judge_ans",  placeholder="Paste or load reference / judge solution here…")
+        self.userPanel = CodePanel(
+            "USER CODE", "judge_user",
+            placeholder="Paste or load user solution here…"
+        )
+        self.ansPanel = CodePanel(
+            "ANSWER CODE", "judge_ans",
+            placeholder="Paste or load reference / judge solution here…"
+        )
         code_row.addWidget(self.userPanel)
         code_row.addWidget(self.ansPanel)
         root.addLayout(code_row, 3)
 
-        # Config card
-        root.addWidget(self._buildConfigCard())
-
-        # Run bar
+        # ── Run bar ───────────────────────────────────────────
         run_bar = QHBoxLayout()
         run_bar.setSpacing(10)
+
+        settingsBtn = QPushButton("⚙  Settings")
+        settingsBtn.setStyleSheet(btn_ghost())
+        settingsBtn.setFixedHeight(40)
+        settingsBtn.clicked.connect(self._openSettings)
+        run_bar.addWidget(settingsBtn)
+
         self.runBtn = QPushButton("▶  Run Tests")
         self.runBtn.setStyleSheet(btn_green())
         self.runBtn.setFixedHeight(40)
         self.runBtn.clicked.connect(self.runTests)
         run_bar.addWidget(self.runBtn)
+
         self.progressBar = QProgressBar()
         self.progressBar.setValue(0)
         self.progressBar.setFixedHeight(8)
         run_bar.addWidget(self.progressBar, 1)
+
         self.statusLabel = QLabel("Idle")
-        self.statusLabel.setStyleSheet(f"color:{TEXT_MAIN}; font-size:13px; font-weight:700; background:transparent;")
+        self.statusLabel.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:13px; font-weight:700; background:transparent;"
+        )
         self.statusLabel.setFixedWidth(140)
         run_bar.addWidget(self.statusLabel)
+
         self.resultSummary = QLabel("")
-        self.resultSummary.setStyleSheet(f"color:{TEXT_DIM}; font-size:13px; font-weight:700; background:transparent;")
+        self.resultSummary.setStyleSheet(
+            f"color:{TEXT_DIM}; font-size:13px; font-weight:700; background:transparent;"
+        )
         run_bar.addWidget(self.resultSummary)
-        
-        # AI buttons
-        ai_bar = QHBoxLayout()
-        ai_bar.setSpacing(12)
-        self.generateJsonBtn = QPushButton("📄 Generate Test JSON")
-        self.generateJsonBtn.setStyleSheet(btn_primary())
-        self.generateJsonBtn.setFixedHeight(36)
-        self.generateJsonBtn.clicked.connect(self._generateTestJSON)
-        self.generateAnswerBtn = QPushButton("💻 Generate Answer Code")
-        self.generateAnswerBtn.setStyleSheet(btn_primary())
-        self.generateAnswerBtn.setFixedHeight(36)
-        self.generateAnswerBtn.clicked.connect(self._generateAnswerCode)
-        ai_bar.addStretch()
-        ai_bar.addWidget(self.generateJsonBtn)
-        ai_bar.addWidget(self.generateAnswerBtn)
-        root.addLayout(ai_bar)
-        
         root.addLayout(run_bar)
 
-        # Results header + splitter
+        # ── Results ───────────────────────────────────────────
         root.addWidget(self._buildResultsHeader())
         root.addWidget(self._buildResultsSplitter(), 3)
 
         self.setLayout(root)
         self._all_results = []
-        self._onStdinToggled(self.stdinCheck.isChecked())
-        self._onStdoutToggled(self.stdoutCheck.isChecked())
 
-    # ── Config card ───────────────────────────────────────────
-    def _buildConfigCard(self):
-        config_card = QWidget()
-        config_card.setStyleSheet(f"QWidget {{ {card_style(BORDER_BRIGHT)} }}")
-        cfg = QVBoxLayout()
-        cfg.setContentsMargins(12, 10, 12, 10)
-        cfg.setSpacing(8)
+        # Create the settings dialog once; show/hide on demand
+        self._settings = SettingsDialog(self)
 
-        cfg_title = QLabel("TEST CONFIGURATION")
-        cfg_title.setStyleSheet(section_label_style())
-        cfg.addWidget(cfg_title)
-
-        fields_row = QHBoxLayout()
-        fields_row.setSpacing(16)
-
-        # Time limit
-        tl_col = QVBoxLayout()
-        tl_col.setSpacing(3)
-        tl_lbl = QLabel("Time Limit (s)")
-        tl_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;")
-        self.timeInput = QLineEdit()
-        self.timeInput.setPlaceholderText("e.g. 1.0")
-        self.timeInput.setFixedWidth(80)
-        self.timeInput.setStyleSheet(line_edit_style())
-        self.timeInput.setText(load("judge_timelimit", "1.0"))
-        self.timeInput.textChanged.connect(lambda t: save("judge_timelimit", t))
-        tl_col.addWidget(tl_lbl)
-        tl_col.addWidget(self.timeInput)
-        fields_row.addLayout(tl_col)
-
-        # Input file
-        in_col = QVBoxLayout()
-        in_col.setSpacing(3)
-        in_lbl = QLabel("Input File")
-        in_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;")
-        in_row2 = QHBoxLayout()
-        in_row2.setSpacing(6)
-        self.inputFile = QLineEdit()
-        self.inputFile.setPlaceholderText("stdin")
-        self.inputFile.setFixedWidth(160)
-        self.inputFile.setStyleSheet(line_edit_style())
-        self.inputFile.setText(load("judge_input_file", ""))
-        self.inputFile.textChanged.connect(lambda t: save("judge_input_file", t))
-        self.stdinCheck = QCheckBox("stdin")
-        self.stdinCheck.setStyleSheet(
-            f"QCheckBox {{ color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent; }}"
-            f"QCheckBox::indicator {{ width:15px; height:15px; border:1px solid {BORDER_BRIGHT}; border-radius:3px; background:{BG2}; }}"
-            f"QCheckBox::indicator:checked {{ background:{ACCENT}; border-color:{ACCENT}; }}"
-        )
-        stdin_saved = load("judge_stdin", "true")
-        self.stdinCheck.setChecked(stdin_saved != "false")
-        self.stdinCheck.toggled.connect(self._onStdinToggled)
-        in_row2.addWidget(self.inputFile)
-        in_row2.addWidget(self.stdinCheck)
-        in_col.addWidget(in_lbl)
-        in_col.addLayout(in_row2)
-        fields_row.addLayout(in_col)
-
-        # Output file
-        out_col = QVBoxLayout()
-        out_col.setSpacing(3)
-        out_lbl = QLabel("Output File")
-        out_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;")
-        out_row2 = QHBoxLayout()
-        out_row2.setSpacing(6)
-        self.outputFile = QLineEdit()
-        self.outputFile.setPlaceholderText("output.out")
-        self.outputFile.setFixedWidth(160)
-        self.outputFile.setStyleSheet(line_edit_style())
-        self.outputFile.setText(load("judge_output_file", "output.out"))
-        self.outputFile.textChanged.connect(lambda t: save("judge_output_file", t))
-        self.stdoutCheck = QCheckBox("stdout")
-        self.stdoutCheck.setStyleSheet(
-            f"QCheckBox {{ color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent; }}"
-            f"QCheckBox::indicator {{ width:15px; height:15px; border:1px solid {BORDER_BRIGHT}; border-radius:3px; background:{BG2}; }}"
-            f"QCheckBox::indicator:checked {{ background:{ACCENT}; border-color:{ACCENT}; }}"
-        )
-        stdout_saved = load("judge_stdout", "false")
-        self.stdoutCheck.setChecked(stdout_saved == "true")
-        self.stdoutCheck.toggled.connect(self._onStdoutToggled)
-        out_row2.addWidget(self.outputFile)
-        out_row2.addWidget(self.stdoutCheck)
-        out_col.addWidget(out_lbl)
-        out_col.addLayout(out_row2)
-        fields_row.addLayout(out_col)
-
-        fields_row.addStretch()
-        cfg.addLayout(fields_row)
-
-        # JSON row
-        json_row = QHBoxLayout()
-        json_row.setSpacing(6)
-        json_lbl = QLabel("Test JSON Config")
-        json_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;")
-        self.jsonEditor = QTextEdit()
-        self.jsonEditor.setFixedHeight(68)
-        self.jsonEditor.setStyleSheet(editor_style())
-        self.jsonEditor.setPlaceholderText("Paste JSON here, or use 'Load from Generator'…")
-        json_row.addWidget(json_lbl)
-        json_row.addWidget(self.jsonEditor, 1)
-
-        json_btns = QVBoxLayout()
-        json_btns.setSpacing(4)
-        loadJsonBtn = QPushButton("Load JSON File")
-        loadJsonBtn.setStyleSheet(btn_ghost())
-        loadJsonBtn.clicked.connect(self.loadJson)
-        fromGenBtn = QPushButton("From Generator")
-        fromGenBtn.setStyleSheet(btn_ghost())
-        fromGenBtn.clicked.connect(self.loadFromGenerator)
-        json_btns.addWidget(loadJsonBtn)
-        json_btns.addWidget(fromGenBtn)
-        json_row.addLayout(json_btns)
-        cfg.addLayout(json_row)
-
-        config_card.setLayout(cfg)
-        return config_card
+    # ── Open settings popup ───────────────────────────────────
+    def _openSettings(self):
+        self._settings.show()
+        self._settings.raise_()
+        self._settings.activateWindow()
 
     # ── Results header bar ────────────────────────────────────
     def _buildResultsHeader(self):
@@ -405,7 +294,9 @@ class JudgeTab(QWidget):
         ohl.setContentsMargins(12, 0, 10, 0)
 
         out_title = QLabel("RESULTS")
-        out_title.setStyleSheet(f"color:{ACCENT}; font-size:13px; font-weight:700; background:transparent;")
+        out_title.setStyleSheet(
+            f"color:{ACCENT}; font-size:13px; font-weight:700; background:transparent;"
+        )
 
         filter_row = QHBoxLayout()
         filter_row.setSpacing(4)
@@ -428,16 +319,16 @@ class JudgeTab(QWidget):
         out_header.setLayout(ohl)
         return out_header
 
-    # ── Results splitter (card list + detail pane) ────────────
+    # ── Results splitter ──────────────────────────────────────
     def _buildResultsSplitter(self):
         self._splitter = QSplitter(Qt.Horizontal)
         self._splitter.setStyleSheet(
-            f"QSplitter {{ background:{BG1}; border:1px solid {BORDER}; border-top:none; border-radius:0 0 6px 6px; }}"
+            f"QSplitter {{ background:{BG1}; border:1px solid {BORDER};"
+            f"  border-top:none; border-radius:0 0 6px 6px; }}"
             f"QSplitter::handle {{ background:{BORDER_BRIGHT}; width:4px; }}"
             f"QSplitter::handle:hover {{ background:{ACCENT}; }}"
         )
 
-        # Left: card list
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.NoFrame)
@@ -451,7 +342,6 @@ class JudgeTab(QWidget):
         self._cardContainer.setLayout(self._cardLayout)
         left_scroll.setWidget(self._cardContainer)
 
-        # Right: detail pane
         self._detailPane = QWidget()
         self._detailPane.setStyleSheet(f"background:{BG0};")
         dp_layout = QVBoxLayout()
@@ -464,7 +354,9 @@ class JudgeTab(QWidget):
         dph_lay = QHBoxLayout()
         dph_lay.setContentsMargins(12, 0, 12, 0)
         self._detailTitle = QLabel("Select a test to inspect")
-        self._detailTitle.setStyleSheet(f"color:{TEXT_MAIN}; font-size:12px; font-weight:700; background:transparent;")
+        self._detailTitle.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:12px; font-weight:700; background:transparent;"
+        )
         dph_lay.addWidget(self._detailTitle)
         dph_lay.addStretch()
         dp_header.setLayout(dph_lay)
@@ -492,14 +384,13 @@ class JudgeTab(QWidget):
         iw_lay = QVBoxLayout()
         iw_lay.setContentsMargins(0, 0, 0, 0)
         iw_lay.setSpacing(0)
-        in_lbl_bar = self._sectionBar("INPUT")
+        iw_lay.addWidget(self._sectionBar("INPUT"))
         self._detailInput = QTextEdit()
         self._detailInput.setReadOnly(True)
         self._detailInput.setStyleSheet(
             f"QTextEdit {{ background:{BG0}; color:#a8c8a8; border:none;"
             f"  font-family:{FONT_MONO}; font-size:12px; padding:12px; }}"
         )
-        iw_lay.addWidget(in_lbl_bar)
         iw_lay.addWidget(self._detailInput)
         in_wrap.setLayout(iw_lay)
         return in_wrap
@@ -510,7 +401,6 @@ class JudgeTab(QWidget):
         eg_lay = QVBoxLayout()
         eg_lay.setContentsMargins(0, 0, 0, 0)
         eg_lay.setSpacing(0)
-        eg_lbl_bar = self._sectionBar("EXPECTED  vs  GOT")
         eg_cols = QSplitter(Qt.Horizontal)
         eg_cols.setStyleSheet(f"QSplitter::handle {{ background:{BORDER}; width:2px; }}")
         self._detailExpected = QTextEdit()
@@ -527,13 +417,11 @@ class JudgeTab(QWidget):
         )
         eg_cols.addWidget(self._detailExpected)
         eg_cols.addWidget(self._detailGot)
-        eg_lay.addWidget(eg_lbl_bar)
+        eg_lay.addWidget(self._sectionBar("EXPECTED  vs  GOT"))
         eg_lay.addWidget(eg_cols)
-        
-        # AI Analysis button
+
         ai_btn_row = QHBoxLayout()
         ai_btn_row.setContentsMargins(0, 8, 0, 0)
-        ai_btn_row.setSpacing(8)
         self.analyzeBtn = QPushButton("🤖 Analyse with AI")
         self.analyzeBtn.setStyleSheet(btn_primary())
         self.analyzeBtn.setFixedHeight(32)
@@ -542,7 +430,7 @@ class JudgeTab(QWidget):
         ai_btn_row.addStretch()
         ai_btn_row.addWidget(self.analyzeBtn)
         eg_lay.addLayout(ai_btn_row)
-        
+
         eg_wrap.setLayout(eg_lay)
         return eg_wrap
 
@@ -553,39 +441,20 @@ class JudgeTab(QWidget):
         lay = QHBoxLayout()
         lay.setContentsMargins(10, 0, 10, 0)
         lbl = QLabel(text)
-        lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:10px; font-weight:700; background:transparent;")
+        lbl.setStyleSheet(
+            f"color:{TEXT_DIM}; font-size:10px; font-weight:700; background:transparent;"
+        )
         lay.addWidget(lbl)
         bar.setLayout(lay)
         return bar
 
-    # ── I/O toggles ───────────────────────────────────────────
-    def _onStdinToggled(self, checked):
-        self.inputFile.setEnabled(not checked)
-        save("judge_stdin", "true" if checked else "false")
-
-    def _onStdoutToggled(self, checked):
-        self.outputFile.setEnabled(not checked)
-        save("judge_stdout", "true" if checked else "false")
-
-    # ── JSON loading ──────────────────────────────────────────
-    def loadJson(self):
-        file, _ = QFileDialog.getOpenFileName(self, "Load JSON", "", "*.json")
-        if file:
-            with open(file, "r", encoding="utf-8") as f:
-                self.jsonEditor.setText(f.read())
-
-    def loadFromGenerator(self):
-        gen_output = self.parent_app.genTab.output.toPlainText()
-        if not gen_output.strip():
-            self._addErrorCard("Generator has no JSON yet — go to Generator tab and click Build JSON first.")
-            return
-        self.jsonEditor.setText(gen_output)
-
     # ── Run tests ─────────────────────────────────────────────
     def runTests(self):
+        s = self._settings   # shorthand
+
         user_code   = self.userPanel.code()
         answer_code = self.ansPanel.code()
-        json_text   = self.jsonEditor.toPlainText()
+        json_text   = s.jsonEditor.toPlainText()
 
         if not user_code.strip():
             self._addErrorCard("⚠  No user code provided.")
@@ -594,18 +463,18 @@ class JudgeTab(QWidget):
             self._addErrorCard("⚠  No answer code provided.")
             return
         try:
-            timeLimit = float(self.timeInput.text())
+            timeLimit = float(s.timeInput.text())
         except (ValueError, TypeError):
             self._addErrorCard("⚠  Invalid time limit.")
             return
         try:
             jsonData = json.loads(json_text)
         except Exception:
-            self._addErrorCard("⚠  Invalid JSON config.")
+            self._addErrorCard("⚠  Invalid JSON config — open Settings to check.")
             return
 
-        input_file  = None if self.stdinCheck.isChecked()  else (self.inputFile.text().strip()  or None)
-        output_file = None if self.stdoutCheck.isChecked() else (self.outputFile.text().strip() or "output.out")
+        input_file  = None if s.stdinCheck.isChecked()  else (s.inputFile.text().strip()  or None)
+        output_file = None if s.stdoutCheck.isChecked() else (s.outputFile.text().strip() or "output.out")
 
         self._clearResults()
         self.runBtn.setEnabled(False)
@@ -670,10 +539,10 @@ class JudgeTab(QWidget):
             f"color:{fg}; font-size:13px; font-weight:800;"
             f"background:transparent; border:none; font-family:{FONT_MONO};"
         )
-
         loc = QLabel(f"Task {result['task']}  ·  Test {result['index']}")
-        loc.setStyleSheet(f"color:{TEXT_MAIN}; font-size:12px; background:transparent; border:none;")
-
+        loc.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:12px; background:transparent; border:none;"
+        )
         exp_short = " ".join(result["answer"][:4])
         got_short = " ".join(result["user"][:4])
         if len(result["answer"]) > 4: exp_short += " …"
@@ -681,10 +550,16 @@ class JudgeTab(QWidget):
 
         if v == "AC":
             preview = QLabel(exp_short)
-            preview.setStyleSheet(f"color:{GREEN}; font-size:11px; font-family:{FONT_MONO}; background:transparent; border:none;")
+            preview.setStyleSheet(
+                f"color:{GREEN}; font-size:11px; font-family:{FONT_MONO};"
+                f"background:transparent; border:none;"
+            )
         else:
             preview = QLabel(f"exp: {exp_short}   got: {got_short}")
-            preview.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; font-family:{FONT_MONO}; background:transparent; border:none;")
+            preview.setStyleSheet(
+                f"color:{TEXT_DIM}; font-size:11px; font-family:{FONT_MONO};"
+                f"background:transparent; border:none;"
+            )
 
         hl.addWidget(badge)
         hl.addWidget(loc)
@@ -695,9 +570,12 @@ class JudgeTab(QWidget):
         self._cardLayout.addWidget(card)
 
     def _showDetail(self, result: dict):
+        self._current_result = result
         v = result["verdict"]
         fg, _, icon = self.VERDICT_STYLE.get(v, (TEXT_DIM, BG2, "?"))
-        self._detailTitle.setText(f"{icon} {v}  —  Task {result['task']}, Test {result['index']}")
+        self._detailTitle.setText(
+            f"{icon} {v}  —  Task {result['task']}, Test {result['index']}"
+        )
         self._detailTitle.setStyleSheet(
             f"color:{fg}; font-size:13px; font-weight:800; background:transparent;"
         )
@@ -709,6 +587,7 @@ class JudgeTab(QWidget):
             f"QTextEdit {{ background:{BG0}; color:{got_col}; border:none;"
             f"  font-family:{FONT_MONO}; font-size:12px; padding:8px; }}"
         )
+        self.analyzeBtn.setEnabled(v != "AC")
 
     def _clearResults(self):
         self._all_results = []
@@ -757,79 +636,290 @@ class JudgeTab(QWidget):
             f"color:{color}; font-size:13px; font-weight:700; background:transparent;"
         )
 
-    # ── AI Analysis ─────────────────────────────────────────────
+    # ── AI analyse (reads from current result + own panels) ───
     def _analyzeWithAI(self):
         if not hasattr(self, '_current_result'):
             return
-        
         result = self._current_result
         if result["verdict"] == "AC":
             return
-        
-        dialog = AIAnalysisDialog(self, result, self.userPanel.code(), self.ansPanel.code(), self.userPanel.lang())
+        dialog = AIAnalysisDialog(
+            self, result,
+            self.userPanel.code(), self.ansPanel.code(), self.userPanel.lang()
+        )
         dialog.exec()
 
-    def _openAIConfig(self):
-        dialog = AIConfigDialog(self)
-        dialog.exec()
 
+# ─────────────────────────────────────────────────────────────
+# Settings Dialog  (non-modal popup with sub-tabs)
+# ─────────────────────────────────────────────────────────────
+class SettingsDialog(QDialog):
+    """
+    Floating, non-modal settings window.
+    Sub-tabs:
+      ⚙  Test Config  — time limit, I/O, JSON editor, AI generation
+      ⚡  Generator   — full GeneratorTab
+    """
+
+    def __init__(self, parent):          # parent = JudgeTab
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setModal(False)
+        self.resize(1000, 680)
+        self.setMinimumSize(800, 500)
+        self.setStyleSheet(f"QDialog {{ background:{BG1}; }}")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # ── Sub-tab bar ───────────────────────────────────────
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        self._tabs.setStyleSheet(
+            f"QTabWidget::pane {{ border:none; background:{BG1}; }}"
+            f"QTabBar {{ background:{BG3}; }}"
+            f"QTabBar::tab {{ background:{BG3}; color:{TEXT_HINT};"
+            f"  padding:10px 24px; font-size:12px; font-weight:700;"
+            f"  border:none; border-right:1px solid {BORDER}; }}"
+            f"QTabBar::tab:selected {{ color:{ACCENT}; background:{BG1};"
+            f"  border-bottom:2px solid {ACCENT}; }}"
+            f"QTabBar::tab:hover:!selected {{ color:{TEXT_MAIN}; background:{BG2}; }}"
+        )
+
+        # Build tabs — jsonEditor must exist before generator tab
+        # tries to connect jsonBuilt, so build Test Config first.
+        self._tabs.addTab(self._buildTestConfig(), "⚙   Test Config")
+        self._tabs.addTab(self._buildGenerator(),  "⚡   Generator")
+        layout.addWidget(self._tabs, 1)
+
+        # ── Bottom bar ────────────────────────────────────────
+        bottom = QWidget()
+        bottom.setFixedHeight(48)
+        bottom.setStyleSheet(
+            f"QWidget {{ background:{BG3}; border-top:1px solid {BORDER}; }}"
+        )
+        bl = QHBoxLayout(bottom)
+        bl.setContentsMargins(16, 0, 16, 0)
+        bl.setSpacing(8)
+
+        hint = QLabel("Changes take effect immediately — no need to save.")
+        hint.setStyleSheet(f"color:{TEXT_HINT}; font-size:11px; background:transparent;")
+        bl.addWidget(hint)
+        bl.addStretch()
+
+        closeBtn = QPushButton("Close")
+        closeBtn.setStyleSheet(btn_ghost())
+        closeBtn.setFixedHeight(30)
+        closeBtn.clicked.connect(self.hide)
+        bl.addWidget(closeBtn)
+        layout.addWidget(bottom)
+
+    # ── Tab 1: Test Config ────────────────────────────────────
+    def _buildTestConfig(self):
+        page = QWidget()
+        page.setStyleSheet(f"background:{BG1};")
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(16, 16, 16, 16)
+        lay.setSpacing(12)
+
+        # ── Row 1: time limit + I/O ───────────────────────────
+        fields_row = QHBoxLayout()
+        fields_row.setSpacing(24)
+
+        # Time limit
+        tl_col = QVBoxLayout()
+        tl_col.setSpacing(4)
+        tl_lbl = QLabel("Time Limit (s)")
+        tl_lbl.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;"
+        )
+        self.timeInput = QLineEdit()
+        self.timeInput.setPlaceholderText("e.g. 1.0")
+        self.timeInput.setFixedWidth(90)
+        self.timeInput.setStyleSheet(line_edit_style())
+        self.timeInput.setText(load("judge_timelimit", "1.0"))
+        self.timeInput.textChanged.connect(lambda t: save("judge_timelimit", t))
+        tl_col.addWidget(tl_lbl)
+        tl_col.addWidget(self.timeInput)
+        fields_row.addLayout(tl_col)
+
+        # Input file
+        in_col = QVBoxLayout()
+        in_col.setSpacing(4)
+        in_lbl = QLabel("Input File")
+        in_lbl.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;"
+        )
+        in_row2 = QHBoxLayout()
+        in_row2.setSpacing(8)
+        self.inputFile = QLineEdit()
+        self.inputFile.setPlaceholderText("stdin")
+        self.inputFile.setFixedWidth(180)
+        self.inputFile.setStyleSheet(line_edit_style())
+        self.inputFile.setText(load("judge_input_file", ""))
+        self.inputFile.textChanged.connect(lambda t: save("judge_input_file", t))
+        self.stdinCheck = QCheckBox("stdin")
+        self.stdinCheck.setStyleSheet(
+            f"QCheckBox {{ color:{TEXT_MAIN}; font-size:12px; font-weight:600;"
+            f"  background:transparent; }}"
+            f"QCheckBox::indicator {{ width:15px; height:15px;"
+            f"  border:1px solid {BORDER_BRIGHT}; border-radius:3px; background:{BG2}; }}"
+            f"QCheckBox::indicator:checked {{ background:{ACCENT}; border-color:{ACCENT}; }}"
+        )
+        stdin_saved = load("judge_stdin", "true")
+        self.stdinCheck.setChecked(stdin_saved != "false")
+        self.stdinCheck.toggled.connect(self._onStdinToggled)
+        in_row2.addWidget(self.inputFile)
+        in_row2.addWidget(self.stdinCheck)
+        in_col.addWidget(in_lbl)
+        in_col.addLayout(in_row2)
+        fields_row.addLayout(in_col)
+
+        # Output file
+        out_col = QVBoxLayout()
+        out_col.setSpacing(4)
+        out_lbl = QLabel("Output File")
+        out_lbl.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;"
+        )
+        out_row2 = QHBoxLayout()
+        out_row2.setSpacing(8)
+        self.outputFile = QLineEdit()
+        self.outputFile.setPlaceholderText("output.out")
+        self.outputFile.setFixedWidth(180)
+        self.outputFile.setStyleSheet(line_edit_style())
+        self.outputFile.setText(load("judge_output_file", "output.out"))
+        self.outputFile.textChanged.connect(lambda t: save("judge_output_file", t))
+        self.stdoutCheck = QCheckBox("stdout")
+        self.stdoutCheck.setStyleSheet(
+            f"QCheckBox {{ color:{TEXT_MAIN}; font-size:12px; font-weight:600;"
+            f"  background:transparent; }}"
+            f"QCheckBox::indicator {{ width:15px; height:15px;"
+            f"  border:1px solid {BORDER_BRIGHT}; border-radius:3px; background:{BG2}; }}"
+            f"QCheckBox::indicator:checked {{ background:{ACCENT}; border-color:{ACCENT}; }}"
+        )
+        stdout_saved = load("judge_stdout", "false")
+        self.stdoutCheck.setChecked(stdout_saved == "true")
+        self.stdoutCheck.toggled.connect(self._onStdoutToggled)
+        out_row2.addWidget(self.outputFile)
+        out_row2.addWidget(self.stdoutCheck)
+        out_col.addWidget(out_lbl)
+        out_col.addLayout(out_row2)
+        fields_row.addLayout(out_col)
+
+        fields_row.addStretch()
+        lay.addLayout(fields_row)
+
+        # ── Divider ───────────────────────────────────────────
+        div = QFrame()
+        div.setFrameShape(QFrame.HLine)
+        div.setStyleSheet(f"color:{BORDER};")
+        lay.addWidget(div)
+
+        # ── JSON editor ───────────────────────────────────────
+        json_hdr = QLabel("Test JSON Config")
+        json_hdr.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:12px; font-weight:700; background:transparent;"
+        )
+        lay.addWidget(json_hdr)
+
+        self.jsonEditor = QTextEdit()
+        self.jsonEditor.setStyleSheet(editor_style())
+        self.jsonEditor.setPlaceholderText(
+            "Paste JSON here,  load a file,  pull from the Generator tab,  or use AI generation below…"
+        )
+        lay.addWidget(self.jsonEditor, 1)
+
+        # ── JSON action buttons ───────────────────────────────
+        json_btns = QHBoxLayout()
+        json_btns.setSpacing(8)
+
+        loadJsonBtn = QPushButton("📂  Load JSON File")
+        loadJsonBtn.setStyleSheet(btn_ghost())
+        loadJsonBtn.clicked.connect(self._loadJson)
+
+        fromGenBtn = QPushButton("⚡  Pull from Generator")
+        fromGenBtn.setStyleSheet(btn_ghost())
+        fromGenBtn.setToolTip("Copy the last-built JSON from the Generator tab")
+        fromGenBtn.clicked.connect(self._pullFromGenerator)
+
+        self.generateJsonBtn = QPushButton("🤖  AI: Generate Test JSON")
+        self.generateJsonBtn.setStyleSheet(btn_primary())
+        self.generateJsonBtn.clicked.connect(self._generateTestJSON)
+
+        self.generateAnswerBtn = QPushButton("🤖  AI: Generate Answer Code")
+        self.generateAnswerBtn.setStyleSheet(btn_primary())
+        self.generateAnswerBtn.clicked.connect(self._generateAnswerCode)
+
+        json_btns.addWidget(loadJsonBtn)
+        json_btns.addWidget(fromGenBtn)
+        json_btns.addStretch()
+        json_btns.addWidget(self.generateJsonBtn)
+        json_btns.addWidget(self.generateAnswerBtn)
+        lay.addLayout(json_btns)
+
+        # Apply initial toggle states
+        self._onStdinToggled(self.stdinCheck.isChecked())
+        self._onStdoutToggled(self.stdoutCheck.isChecked())
+
+        return page
+
+    # ── Tab 2: Generator ─────────────────────────────────────
+    def _buildGenerator(self):
+        from generator import GeneratorTab
+
+        self.genTab = GeneratorTab()
+        # Every time the generator builds JSON it emits jsonBuilt(str);
+        # wire it straight into the JSON editor in Tab 1.
+        self.genTab.jsonBuilt.connect(self.jsonEditor.setText)
+        return self.genTab
+
+    # ── I/O toggles ───────────────────────────────────────────
+    def _onStdinToggled(self, checked):
+        self.inputFile.setEnabled(not checked)
+        save("judge_stdin", "true" if checked else "false")
+
+    def _onStdoutToggled(self, checked):
+        self.outputFile.setEnabled(not checked)
+        save("judge_stdout", "true" if checked else "false")
+
+    # ── JSON helpers ──────────────────────────────────────────
+    def _loadJson(self):
+        file, _ = QFileDialog.getOpenFileName(self, "Load JSON", "", "*.json")
+        if file:
+            with open(file, "r", encoding="utf-8") as f:
+                self.jsonEditor.setText(f.read())
+
+    def _pullFromGenerator(self):
+        gen_output = self.genTab.output.toPlainText()
+        if not gen_output.strip():
+            # Switch to generator tab so the user can build JSON
+            self._tabs.setCurrentIndex(1)
+            return
+        self.jsonEditor.setText(gen_output)
+
+    # ── AI generation ─────────────────────────────────────────
     def _generateTestJSON(self):
-        """Generate test JSON blueprint using AI"""
-        dialog = AIGenerationDialog(self, "json", self.userPanel.code(), self.ansPanel.code(), self.userPanel.lang())
+        judge = self.parent()   # JudgeTab
+        dialog = AIGenerationDialog(
+            self, "json",
+            judge.userPanel.code(), judge.ansPanel.code(), judge.userPanel.lang()
+        )
         dialog.exec()
 
     def _generateAnswerCode(self):
-        """Generate answer code using AI"""
-        dialog = AIGenerationDialog(self, "answer", self.userPanel.code(), self.ansPanel.code(), self.userPanel.lang())
+        judge = self.parent()
+        dialog = AIGenerationDialog(
+            self, "answer",
+            judge.userPanel.code(), judge.ansPanel.code(), judge.userPanel.lang()
+        )
         dialog.exec()
 
-    def _showDetail(self, result: dict):
-        self._current_result = result
-        v = result["verdict"]
-        fg, _, icon = self.VERDICT_STYLE.get(v, (TEXT_DIM, BG2, "?"))
-        self._detailTitle.setText(f"{icon} {v}  —  Task {result['task']}, Test {result['index']}")
-        self._detailTitle.setStyleSheet(
-            f"color:{fg}; font-size:13px; font-weight:800; background:transparent;"
-        )
-        self._detailInput.setPlainText(result.get("input", ""))
-        self._detailExpected.setPlainText("\n".join(result["answer"]))
-        self._detailGot.setPlainText("\n".join(result["user"]))
-        got_col = GREEN if v == "AC" else RED
-        self._detailGot.setStyleSheet(
-            f"QTextEdit {{ background:{BG0}; color:{got_col}; border:none;"
-            f"  font-family:{FONT_MONO}; font-size:12px; padding:8px; }}"
-        )
-        self.analyzeBtn.setEnabled(v != "AC")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# REPLACE the AIAnalysisDialog and AIConfigDialog classes at the bottom of
-# your judge_tab.py with these versions.
-#
-# Changes:
-#   - AIAnalysisDialog now streams the AI response token-by-token (no more
-#     waiting for the full response before seeing anything)
-#   - AIConfigDialog now matches the provider keys used by ai_worker.py
-# ─────────────────────────────────────────────────────────────────────────────
-
-from PySide6.QtGui import QTextCursor
-
 
 # ─────────────────────────────────────────────────────────────
-# Replace AIAnalysisDialog and AIConfigDialog at the bottom of
-# judge_tab.py with these two classes.
-#
-# Also add this import near the top of judge_tab.py:
-#   from PySide6.QtGui import QTextCursor
+# AI Dialogs  (unchanged from original)
 # ─────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────
-# Replace AIAnalysisDialog at the bottom of judge_tab.py
-# with this class. Also delete AIConfigDialog entirely.
-#
-# Add this import near the top of judge_tab.py:
-#   from PySide6.QtGui import QTextCursor
-# ─────────────────────────────────────────────────────────────
-
 
 class AIAnalysisDialog(QDialog):
     def __init__(self, parent, result, user_code, answer_code, language):
@@ -847,7 +937,6 @@ class AIAnalysisDialog(QDialog):
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
 
-        # Title
         v    = result["verdict"]
         fg   = RED if v in ("WA", "RTE") else AMBER
         icon = {"WA": "✗", "RTE": "💥", "TLE": "⏱"}.get(v, "?")
@@ -859,8 +948,7 @@ class AIAnalysisDialog(QDialog):
         )
         layout.addWidget(title)
 
-        # Problem statement
-        ps_lbl = QLabel("Problem statement  (optional but recommended — paste it for better analysis)")
+        ps_lbl = QLabel("Problem statement  (optional but recommended)")
         ps_lbl.setStyleSheet(
             f"color:{TEXT_DIM}; font-size:11px; font-weight:600; background:transparent;"
         )
@@ -872,7 +960,6 @@ class AIAnalysisDialog(QDialog):
         self._stmt.setText(load("ai_problem_statement", ""))
         layout.addWidget(self._stmt)
 
-        # Streaming output
         out_lbl = QLabel("Analysis")
         out_lbl.setStyleSheet(
             f"color:{TEXT_DIM}; font-size:11px; font-weight:600; background:transparent;"
@@ -885,11 +972,9 @@ class AIAnalysisDialog(QDialog):
             f"QTextEdit {{ background:{BG0}; color:{TEXT_MAIN};"
             f"  border:1px solid {BORDER}; border-radius:8px;"
             f"  font-family:{FONT_UI}; font-size:13px; padding:12px; }}"
-            f"QTextEdit {{ selection-background-color:{ACCENT}; selection-color:#fff; }}"
         )
         layout.addWidget(self._out, 1)
 
-        # Buttons
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         self._btn = QPushButton("▶  Analyse")
@@ -904,9 +989,6 @@ class AIAnalysisDialog(QDialog):
         layout.addLayout(btn_row)
 
     def _start(self):
-        from ai_worker import AIWorker
-        from PySide6.QtGui import QTextCursor
-
         stmt = self._stmt.toPlainText().strip()
         save("ai_problem_statement", stmt)
         self._btn.setEnabled(False)
@@ -932,33 +1014,11 @@ class AIAnalysisDialog(QDialog):
         self._worker.start()
 
     def _stream_token(self, token: str):
-        from PySide6.QtGui import QTextCursor
         c = self._out.textCursor()
         c.movePosition(QTextCursor.End)
         c.insertText(token)
         self._out.setTextCursor(c)
         self._out.ensureCursorVisible()
-
-    def _apply_json_highlighting(self, text: str):
-        """Apply basic JSON syntax highlighting"""
-        try:
-            import json
-            data = json.loads(text)
-            formatted = json.dumps(data, indent=2)
-            
-            # Simple syntax highlighting
-            highlighted = formatted
-            highlighted = highlighted.replace('"', '<span style="color:#a5d6ff;">"</span>')
-            highlighted = highlighted.replace(':', '<span style="color:#ff7b72;">:</span>')
-            highlighted = highlighted.replace(',', '<span style="color:#8b949e;">,</span>')
-            highlighted = highlighted.replace('{', '<span style="color:#ff7b72;">{</span>')
-            highlighted = highlighted.replace('}', '<span style="color:#ff7b72;">}</span>')
-            highlighted = highlighted.replace('[', '<span style="color:#ff7b72;">[</span>')
-            highlighted = highlighted.replace(']', '<span style="color:#ff7b72;">]</span>')
-            
-            return highlighted
-        except:
-            return text
 
     def _on_done(self):
         self._btn.setEnabled(True)
@@ -973,16 +1033,12 @@ class AIAnalysisDialog(QDialog):
 class AIGenerationDialog(QDialog):
     def __init__(self, parent, mode, user_code, answer_code, language):
         super().__init__(parent)
-        self.mode = mode
-        self.user_code = user_code
+        self.mode        = mode
+        self.user_code   = user_code
         self.answer_code = answer_code
-        self.language = language
-        
-        if mode == "json":
-            self.setWindowTitle("Generate Test JSON")
-        else:
-            self.setWindowTitle("Generate Answer Code")
-        
+        self.language    = language
+
+        self.setWindowTitle("Generate Test JSON" if mode == "json" else "Generate Answer Code")
         self.setModal(True)
         self.setStyleSheet(f"QDialog {{ background:{BG1}; }}")
         self.resize(700, 500)
@@ -991,25 +1047,30 @@ class AIGenerationDialog(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
 
-        title = QLabel(f"🤖 AI Generation - {mode.upper()}")
-        title.setStyleSheet(f"color:{ACCENT}; font-size:14px; font-weight:700; background:transparent;")
+        title = QLabel(f"🤖 AI Generation — {mode.upper()}")
+        title.setStyleSheet(
+            f"color:{ACCENT}; font-size:14px; font-weight:700; background:transparent;"
+        )
         layout.addWidget(title)
 
-        # Problem statement field
         ps_label = QLabel("Problem Statement (optional but recommended):")
-        ps_label.setStyleSheet(f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;")
+        ps_label.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;"
+        )
         layout.addWidget(ps_label)
-        
+
         self.problemStatement = QTextEdit()
         self.problemStatement.setMaximumHeight(100)
-        self.problemStatement.setPlaceholderText("Paste the problem statement here for better generation...")
+        self.problemStatement.setPlaceholderText(
+            "Paste the problem statement here for better generation…"
+        )
         self.problemStatement.setStyleSheet(editor_style())
         self.problemStatement.setText(load("ai_problem_statement", ""))
         layout.addWidget(self.problemStatement)
 
         self.output = QTextEdit()
         self.output.setReadOnly(True)
-        self.output.setPlaceholderText("Click 'Generate' to start...")
+        self.output.setPlaceholderText("Click 'Generate' to start…")
         self.output.setStyleSheet(editor_style())
         layout.addWidget(self.output, 1)
 
@@ -1030,29 +1091,28 @@ class AIGenerationDialog(QDialog):
         btn_row.addWidget(self.acceptBtn)
         btn_row.addWidget(closeBtn)
         layout.addLayout(btn_row)
-
         self.setLayout(layout)
 
     def _startGeneration(self):
         self.generateBtn.setEnabled(False)
-        self.generateBtn.setText("Generating...")
+        self.generateBtn.setText("Generating…")
         self.output.clear()
-        
+
         problem_statement = self.problemStatement.toPlainText().strip()
         save("ai_problem_statement", problem_statement)
-        
+
         self.worker = AIWorker(
-            user_code=self.user_code,
-            answer_code=self.answer_code,
-            test_input="",
-            expected="",
-            got="",
-            verdict="",
-            task=1,
-            index=1,
-            language=self.language,
-            problem_statement=problem_statement,
-            output_mode=self.mode
+            user_code         = self.user_code,
+            answer_code       = self.answer_code,
+            test_input        = "",
+            expected          = "",
+            got               = "",
+            verdict           = "",
+            task              = 1,
+            index             = 1,
+            language          = self.language,
+            problem_statement = problem_statement,
+            output_mode       = self.mode,
         )
         self.worker.chunk.connect(self._streamToken)
         self.worker.finished.connect(self._onDone)
@@ -1060,7 +1120,6 @@ class AIGenerationDialog(QDialog):
         self.worker.start()
 
     def _streamToken(self, token):
-        from PySide6.QtGui import QTextCursor
         c = self.output.textCursor()
         c.movePosition(QTextCursor.End)
         c.insertText(token)
@@ -1071,8 +1130,6 @@ class AIGenerationDialog(QDialog):
         self.generateBtn.setEnabled(True)
         self.generateBtn.setText("Generate")
         self.acceptBtn.setEnabled(True)
-        
-        # Remove markdown code blocks
         content = self.output.toPlainText()
         content = re.sub(r'```[\w]*\n?', '', content)
         content = re.sub(r'```', '', content)
@@ -1083,32 +1140,14 @@ class AIGenerationDialog(QDialog):
         self.generateBtn.setEnabled(True)
         self.generateBtn.setText("Generate")
 
-    def _applyJsonHighlighting(self, text):
-        try:
-            import json
-            data = json.loads(text)
-            formatted = json.dumps(data, indent=2)
-            highlighted = formatted
-            highlighted = highlighted.replace('"', '<span style="color:#a5d6ff;">"</span>')
-            highlighted = highlighted.replace(':', '<span style="color:#ff7b72;">:</span>')
-            highlighted = highlighted.replace(',', '<span style="color:#8b949e;">,</span>')
-            highlighted = highlighted.replace('{', '<span style="color:#ff7b72;">{</span>')
-            highlighted = highlighted.replace('}', '<span style="color:#ff7b72;">}</span>')
-            highlighted = highlighted.replace('[', '<span style="color:#ff7b72;">[</span>')
-            highlighted = highlighted.replace(']', '<span style="color:#ff7b72;">]</span>')
-            return highlighted
-        except:
-            return text
-
     def _acceptContent(self):
-        """Apply generated content to the appropriate place"""
         content = self.output.toPlainText()
         if self.mode == "json":
-            # Apply to JSON editor in parent judge tab
+            # parent = SettingsDialog → its jsonEditor
             self.parent().jsonEditor.setText(content)
         elif self.mode == "answer":
-            # Apply to answer code panel
-            self.parent().ansPanel.editor.setText(content)
+            # parent = SettingsDialog → parent() = JudgeTab → ansPanel
+            self.parent().parent().ansPanel.editor.setText(content)
         self.accept()
 
 
@@ -1125,76 +1164,75 @@ class AIConfigDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
 
         title = QLabel("AI Debug Setup")
-        title.setStyleSheet(f"color:{ACCENT}; font-size:14px; font-weight:700; background:transparent;")
+        title.setStyleSheet(
+            f"color:{ACCENT}; font-size:14px; font-weight:700; background:transparent;"
+        )
         layout.addWidget(title)
 
-        # Simple mode selector
         mode_lbl = QLabel("Mode:")
-        mode_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;")
+        mode_lbl.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:12px; font-weight:600; background:transparent;"
+        )
         layout.addWidget(mode_lbl)
-        
+
         self.modeBox = QComboBox()
         self.modeBox.addItems(["basic (no setup)", "groq (free API)", "custom API"])
         self.modeBox.setStyleSheet(line_edit_style())
         self.modeBox.currentTextChanged.connect(self._onModeChanged)
         layout.addWidget(self.modeBox)
 
-
-        # Groq settings (hidden by default)
         self.groq_group = QWidget()
         groq_layout = QVBoxLayout()
         groq_layout.setSpacing(6)
-        
         groq_key_lbl = QLabel("API Key:")
-        groq_key_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:11px; font-weight:600; background:transparent;")
+        groq_key_lbl.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:11px; font-weight:600; background:transparent;"
+        )
         self.groqKeyEdit = QLineEdit()
         self.groqKeyEdit.setEchoMode(QLineEdit.Password)
-        self.groqKeyEdit.setPlaceholderText("gsk_...")
+        self.groqKeyEdit.setPlaceholderText("gsk_…")
         self.groqKeyEdit.setStyleSheet(line_edit_style())
         self.groqKeyEdit.setText(load("groq_key", ""))
-        
         groq_model_lbl = QLabel("Model:")
-        groq_model_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:11px; font-weight:600; background:transparent;")
+        groq_model_lbl.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:11px; font-weight:600; background:transparent;"
+        )
         self.groqModelEdit = QLineEdit()
         self.groqModelEdit.setPlaceholderText("llama-3.3-70b-versatile")
         self.groqModelEdit.setStyleSheet(line_edit_style())
         self.groqModelEdit.setText(load("groq_model", "llama-3.3-70b-versatile"))
-        
+        groq_link = QLabel('<a href="https://console.groq.com/keys">Get free Groq API key</a>')
+        groq_link.setStyleSheet(f"color:{ACCENT}; font-size:10px; background:transparent;")
+        groq_link.setOpenExternalLinks(True)
         groq_layout.addWidget(groq_key_lbl)
         groq_layout.addWidget(self.groqKeyEdit)
         groq_layout.addWidget(groq_model_lbl)
         groq_layout.addWidget(self.groqModelEdit)
-        
-        # Get API key link
-        groq_link = QLabel('<a href="https://console.groq.com/keys">Get free Groq API key</a>')
-        groq_link.setStyleSheet(f"color:{ACCENT}; font-size:10px; background:transparent;")
-        groq_link.setOpenExternalLinks(True)
         groq_layout.addWidget(groq_link)
-        
         self.groq_group.setLayout(groq_layout)
         self.groq_group.setVisible(False)
         layout.addWidget(self.groq_group)
 
-        # Custom API settings (hidden by default)
         self.api_group = QWidget()
         api_layout = QVBoxLayout()
         api_layout.setSpacing(6)
-        
         api_url_lbl = QLabel("API URL:")
-        api_url_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:11px; font-weight:600; background:transparent;")
+        api_url_lbl.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:11px; font-weight:600; background:transparent;"
+        )
         self.apiUrlEdit = QLineEdit()
         self.apiUrlEdit.setPlaceholderText("https://api.example.com/v1/chat")
         self.apiUrlEdit.setStyleSheet(line_edit_style())
         self.apiUrlEdit.setText(load("custom_api_url", ""))
-        
         api_key_lbl = QLabel("API Key:")
-        api_key_lbl.setStyleSheet(f"color:{TEXT_MAIN}; font-size:11px; font-weight:600; background:transparent;")
+        api_key_lbl.setStyleSheet(
+            f"color:{TEXT_MAIN}; font-size:11px; font-weight:600; background:transparent;"
+        )
         self.apiKeyEdit = QLineEdit()
         self.apiKeyEdit.setEchoMode(QLineEdit.Password)
         self.apiKeyEdit.setPlaceholderText("your-api-key")
         self.apiKeyEdit.setStyleSheet(line_edit_style())
         self.apiKeyEdit.setText(load("custom_api_key", ""))
-        
         api_layout.addWidget(api_url_lbl)
         api_layout.addWidget(self.apiUrlEdit)
         api_layout.addWidget(api_key_lbl)
@@ -1203,7 +1241,6 @@ class AIConfigDialog(QDialog):
         self.api_group.setVisible(False)
         layout.addWidget(self.api_group)
 
-        # Info text
         info = QLabel(
             "💡 Basic mode: Simple pattern matching, works immediately.\n"
             "   Groq: Free fast AI API, get key at console.groq.com/keys\n"
@@ -1213,7 +1250,6 @@ class AIConfigDialog(QDialog):
         info.setStyleSheet(f"color:{TEXT_HINT}; font-size:10px; background:transparent;")
         layout.addWidget(info)
 
-        # Buttons
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         save_btn = QPushButton("Save")
@@ -1226,10 +1262,8 @@ class AIConfigDialog(QDialog):
         btn_row.addWidget(save_btn)
         btn_row.addWidget(cancel_btn)
         layout.addLayout(btn_row)
-
         self.setLayout(layout)
-        
-        # Set current mode
+
         current_mode = load("ai_mode", "basic")
         self.modeBox.setCurrentText(current_mode)
         self._onModeChanged(current_mode)
@@ -1240,9 +1274,9 @@ class AIConfigDialog(QDialog):
 
     def _save(self):
         mode = self.modeBox.currentText()
-        save("ai_mode", mode)
-        save("groq_key", self.groqKeyEdit.text())
-        save("groq_model", self.groqModelEdit.text())
-        save("custom_api_url", self.apiUrlEdit.text())
-        save("custom_api_key", self.apiKeyEdit.text())
+        save("ai_mode",          mode)
+        save("groq_key",         self.groqKeyEdit.text())
+        save("groq_model",       self.groqModelEdit.text())
+        save("custom_api_url",   self.apiUrlEdit.text())
+        save("custom_api_key",   self.apiKeyEdit.text())
         self.accept()
